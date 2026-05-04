@@ -1,0 +1,24 @@
+# virtual environment
+venv311/
+
+# raw and processed data (re-download with download_data.py)
+data/raw/
+data/processed/
+
+# any stray processed JSON at project root
+ham.json
+phishing.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# generated plots
+plots/
+
+# secrets / environment
+.env
+
+# IDE / Claude Code settings
+config/
