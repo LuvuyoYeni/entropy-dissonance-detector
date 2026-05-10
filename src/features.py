@@ -14,20 +14,17 @@ except OSError:
 
 NGRAM_ORDER = 3
 
-# ── sentence tokeniser ────────────────────────────────────────────────────────
-
 _ABBREV_SET = frozenset({
     'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'vs', 'etc', 'inc', 'ltd',
     'corp', 'fig', 'vol', 'ed', 'approx', 'est', 'dept', 'no', 'st', 'ave',
     'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
 })
 
-# ? and ! always end a sentence; . only ends a sentence before a capital letter
+# . only splits before a capital; ? and ! always split
 _SENT_SPLIT_RE = re.compile(r'(?<=[!?])\s+|(?<=[.])\s+(?=[A-Z])')
 
 
 def sent_tokenize(text):
-    """Split text into sentences on [.!?] boundaries, skipping common abbreviations."""
     text = text.strip()
     if not text:
         return []
@@ -43,7 +40,7 @@ def sent_tokenize(text):
         if word_match:
             w = word_match.group(1).lower()
             if w in _ABBREV_SET or len(w) == 1:
-                continue  # abbreviation — keep merging into the next chunk
+                continue  # abbreviation, not a sentence boundary
         sentences.append(chunk.strip())
         start = match.end()
 
@@ -53,25 +50,14 @@ def sent_tokenize(text):
     return sentences
 
 
-# ── word tokeniser ────────────────────────────────────────────────────────────
-
 _WORD_RE = re.compile(r'[a-zA-Z]+')
 
 
 def word_tokenize(text):
-    """Return a list of alphabetic tokens, preserving case."""
     return _WORD_RE.findall(text)
 
 
-# ── trigram language model with Laplace smoothing ────────────────────────────
-
 class LaplaceTrigramModel:
-    """
-    Trigram language model with Laplace (+1) smoothing.
-
-    P(word | context) = (count(context + word) + 1) / (count(context) + |V|)
-    """
-
     def __init__(self):
         self._unigrams = Counter()
         self._bigrams = Counter()
@@ -79,7 +65,6 @@ class LaplaceTrigramModel:
         self._vocab_size = 0
 
     def fit(self, sentences):
-        """sentences: list of lists of lowercase string tokens."""
         for tokens in sentences:
             for i, tok in enumerate(tokens):
                 self._unigrams[tok] += 1
@@ -91,10 +76,8 @@ class LaplaceTrigramModel:
         return self
 
     def score(self, word, context):
-        """Return P(word | context) with Laplace smoothing.
-
-        context: tuple of 0, 1, or 2 preceding tokens.
-        """
+        # context is a tuple of 0, 1, or 2 preceding tokens
+        # P(word|context) = (count + 1) / (context_count + V)
         V = self._vocab_size or 1
         if len(context) >= 2:
             c_w = self._trigrams.get((context[-2], context[-1], word), 0)
@@ -107,8 +90,6 @@ class LaplaceTrigramModel:
             c_ctx = sum(self._unigrams.values())
         return (c_w + 1) / (c_ctx + V)
 
-
-# ── public API ────────────────────────────────────────────────────────────────
 
 def build_language_model(texts):
     sentences = []

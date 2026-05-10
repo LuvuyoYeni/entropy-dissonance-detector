@@ -10,7 +10,6 @@ import seaborn as sns
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 
-# Ensure WordNet corpus is present (re-download if the zip is corrupt)
 for _resource, _pkg in [
     ("corpora/wordnet", "wordnet"),
     ("corpora/omw-1.4", "omw-1.4"),
@@ -26,7 +25,6 @@ from nltk.tokenize import sent_tokenize, word_tokenize
 SUBSTITUTION_RATE = 0.30
 RANDOM_SEED = 42
 
-# NLTK POS tags that map to WordNet POS constants
 _WN_POS_MAP = {
     "NN": wordnet.NOUN,  "NNS": wordnet.NOUN,
     "NNP": wordnet.NOUN, "NNPS": wordnet.NOUN,
@@ -39,7 +37,6 @@ _WN_POS_MAP = {
 
 
 def _get_synonym(word, pos_tag):
-    """Return the first WordNet synonym for word that differs from the original, or None."""
     wn_pos = _WN_POS_MAP.get(pos_tag)
     if wn_pos is None:
         return None
@@ -52,7 +49,6 @@ def _get_synonym(word, pos_tag):
 
 
 def _obfuscate_sentence(sentence, rng):
-    """Replace ~30 % of eligible content words with WordNet synonyms."""
     tokens = word_tokenize(sentence)
     tagged = nltk.pos_tag(tokens)
 
@@ -71,7 +67,6 @@ def _obfuscate_sentence(sentence, rng):
 
 
 def _obfuscate_text(text, rng):
-    """Obfuscate every sentence in a document."""
     return " ".join(_obfuscate_sentence(s, rng) for s in sent_tokenize(text))
 
 
@@ -80,7 +75,7 @@ def _plot_adversarial_comparison(d2_orig, d2_obf, d3_orig, d3_obf, plots_dir):
     values = [d2_orig, d2_obf, d3_orig, d3_obf]
     colors = ["#7b9ecc", "#4a6fa5", "#e07b54", "#a84e2f"]
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    _, ax = plt.subplots(figsize=(8, 5))
     bars = ax.bar(labels, values, color=colors, width=0.55, edgecolor="white", linewidth=0.8)
 
     for bar, val in zip(bars, values):
@@ -110,25 +105,18 @@ def _plot_adversarial_comparison(d2_orig, d2_obf, d3_orig, d3_obf, plots_dir):
 
 
 def run_adversarial_experiment(baseline_results, full_results, phishing_texts, plots_dir):
-    """
-    Apply synonym substitution to the phishing test split and re-score with
-    the already-fitted D2 and D3 detectors.  Nothing is retrained.
-    """
     print("\n=== Adversarial Experiment: Synonym Substitution ===")
     print(f"  Substitution rate : {SUBSTITUTION_RATE:.0%} of eligible content words per sentence")
 
     rng = random.Random(RANDOM_SEED)
 
-    # Recover the same phishing test split used by both evaluate functions
+    # same split as both evaluate functions so we score the same test emails
     _, phish_test = train_test_split(phishing_texts, test_size=0.2, random_state=42)
     print(f"  Phishing test emails: {len(phish_test)}")
 
-    print("  Applying synonym substitution …")
+    print("  Applying synonym substitution...")
     obfuscated_phish = [_obfuscate_text(t, rng) for t in phish_test]
 
-    # ------------------------------------------------------------------
-    # D2 — BaselineDetector (H_lex only)
-    # ------------------------------------------------------------------
     d2_detector = baseline_results["detector"]
     d2_norm_scores = list(baseline_results["norm_scores"])
     d2_orig_auroc = baseline_results["auroc"]
@@ -138,9 +126,6 @@ def run_adversarial_experiment(baseline_results, full_results, phishing_texts, p
     d2_obf_auroc = roc_auc_score(d2_labels_obf, d2_norm_scores + d2_obf_phish_scores)
     d2_degradation = d2_orig_auroc - d2_obf_auroc
 
-    # ------------------------------------------------------------------
-    # D3 — JointEntropyDetector (Mahalanobis on H_lex + H_syn)
-    # ------------------------------------------------------------------
     d3_detector = full_results["detector"]
     d3_norm_scores = list(full_results["norm_scores"])
     d3_orig_auroc = full_results["auroc"]
@@ -150,9 +135,6 @@ def run_adversarial_experiment(baseline_results, full_results, phishing_texts, p
     d3_obf_auroc = roc_auc_score(d3_labels_obf, d3_norm_scores + d3_obf_phish_scores)
     d3_degradation = d3_orig_auroc - d3_obf_auroc
 
-    # ------------------------------------------------------------------
-    # Summary
-    # ------------------------------------------------------------------
     print("\n" + "=" * 62)
     print("  ADVERSARIAL EXPERIMENT RESULTS")
     print("=" * 62)

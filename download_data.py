@@ -1,15 +1,3 @@
-"""
-download_data.py
-Downloads and prepares the email corpora used by the pipeline.
-
-Run once before anything else: python download_data.py
-
-Data sources:
-  Ham      : SpamAssassin easy_ham + easy_ham_2  (~3 900 legitimate emails)
-  Phishing : Jose Nazario phishing3.mbox         (~2 400 real phishing emails)
-             Mirror: github.com/shaeferd/Phishing-Detection
-"""
-
 import tarfile
 import urllib.request
 import email
@@ -21,16 +9,11 @@ DATA_DIR = Path("data")
 RAW_DIR  = DATA_DIR / "raw"
 OUT_DIR  = DATA_DIR / "processed"
 
-# Legitimate email corpora (SpamAssassin public archive)
 HAM_URLS = [
     "https://spamassassin.apache.org/old/publiccorpus/20030228_easy_ham.tar.bz2",
     "https://spamassassin.apache.org/old/publiccorpus/20030228_easy_ham_2.tar.bz2",
 ]
 
-# Nazario phishing corpus — Jose Nazario's real phishing email collection in mbox
-# format (mirror: github.com/shaeferd/Phishing-Detection).  This is the correct
-# anomalous class for the project: genuine phishing emails matched against
-# legitimate ham, not generic spam.
 NAZARIO_URL = (
     "https://raw.githubusercontent.com/shaeferd/Phishing-Detection"
     "/master/phishing3.mbox"
@@ -47,7 +30,6 @@ def download(url: str, dest: Path) -> None:
 
 
 def extract_text_from_email(raw: bytes) -> str:
-    """Pull plain-text body from a raw email byte string."""
     try:
         msg = email.message_from_bytes(raw)
     except Exception:
@@ -73,7 +55,6 @@ def extract_text_from_email(raw: bytes) -> str:
 
 
 def clean(text: str) -> str:
-    """Remove URLs, email addresses, and excess whitespace."""
     text = re.sub(r"http\S+|www\.\S+", " ", text)
     text = re.sub(r"\S+@\S+", " ", text)
     text = re.sub(r"\s+", " ", text)
@@ -81,7 +62,6 @@ def clean(text: str) -> str:
 
 
 def load_spamassassin(tarball: Path) -> list[str]:
-    """Load plain-text bodies from a SpamAssassin .tar.bz2 corpus."""
     texts = []
     with tarfile.open(tarball, "r:bz2") as tf:
         for member in tf.getmembers():
@@ -89,31 +69,21 @@ def load_spamassassin(tarball: Path) -> list[str]:
                 f = tf.extractfile(member)
                 if f:
                     raw = f.read()
-                    text = extract_text_from_email(raw)
-                    text = clean(text)
+                    text = clean(extract_text_from_email(raw))
                     if len(text) > 50:
                         texts.append(text)
     return texts
 
 
 def load_nazario(mbox_path: Path) -> list[str]:
-    """
-    Load plain-text bodies from the Nazario phishing mbox file.
-
-    The mbox is parsed line-by-line rather than via mailbox.mbox so that
-    non-ASCII bytes in headers (common in phishing samples) do not abort
-    the entire file read.  Each message is collected between 'From ' lines
-    and decoded with latin-1 (lossless for arbitrary bytes) before being
-    passed through the standard email parser.
-    """
+    # parsed line-by-line because non-ASCII bytes in phishing headers break mailbox.mbox
     texts = []
     current_lines = []
 
     def _process(raw_lines):
         raw = b"\n".join(raw_lines)
         try:
-            text = extract_text_from_email(raw)
-            text = clean(text)
+            text = clean(extract_text_from_email(raw))
             if len(text) > 50:
                 texts.append(text)
         except Exception:
@@ -139,7 +109,6 @@ def main():
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── Ham (legitimate) ──────────────────────────────────────────────────
     print("\n[1/2] SpamAssassin legitimate email corpus (easy_ham)")
     ham_texts = []
     for url in HAM_URLS:
@@ -152,7 +121,6 @@ def main():
 
     print(f"  Loaded {len(ham_texts)} legitimate emails")
 
-    # ── Nazario phishing ──────────────────────────────────────────────────
     print("\n[2/2] Nazario phishing corpus")
     naz_dest = RAW_DIR / "phishing3.mbox"
     try:
@@ -164,14 +132,10 @@ def main():
 
     print(f"  Loaded {len(phish_texts)} phishing emails")
 
-    # ── Save processed JSON ───────────────────────────────────────────────
-    ham_out   = OUT_DIR / "ham.json"
-    phish_out = OUT_DIR / "phishing.json"
-
-    with open(ham_out, "w", encoding="utf-8") as f:
+    with open(OUT_DIR / "ham.json", "w", encoding="utf-8") as f:
         json.dump(ham_texts, f, ensure_ascii=False, indent=2)
 
-    with open(phish_out, "w", encoding="utf-8") as f:
+    with open(OUT_DIR / "phishing.json", "w", encoding="utf-8") as f:
         json.dump(phish_texts, f, ensure_ascii=False, indent=2)
 
     print(f"\nDone. Files saved to {OUT_DIR}/")

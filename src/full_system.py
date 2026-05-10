@@ -20,7 +20,15 @@ class JointEntropyDetector:
         X = np.array([[r["h_lex"], r["h_syn"]] for r in records])
 
         self.mu_ = X.mean(axis=0)
-        cov = np.cov(X, rowvar=False)
+
+        n = len(X)
+        diff = X - self.mu_
+        cov = np.zeros((2, 2))
+        for row in diff:
+            for i in range(2):
+                for j in range(2):
+                    cov[i][j] += row[i] * row[j]
+        cov = cov / (n - 1)
 
         try:
             self.sigma_inv_ = np.linalg.inv(cov)
@@ -28,7 +36,7 @@ class JointEntropyDetector:
             self.sigma_inv_ = np.linalg.pinv(cov)
 
         print(f"  mu = [H_lex: {self.mu_[0]:.3f}, H_syn: {self.mu_[1]:.3f}]")
-        print(f"  Covariance matrix:\n{np.cov(X, rowvar=False).round(4)}")
+        print(f"  Covariance matrix:\n{cov.round(4)}")
 
         normal_distances = [self._mahalanobis(r["h_lex"], r["h_syn"]) for r in records]
         percentile_tau = float(np.percentile(normal_distances, 95))

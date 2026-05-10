@@ -1,5 +1,3 @@
-
-
 import json
 import numpy as np
 import matplotlib.pyplot as plt
@@ -32,7 +30,7 @@ def load_data():
 
 
 def plot_roc_comparison(baseline_results, full_results):
-    fig, ax = plt.subplots(figsize=(7, 6))
+    _, ax = plt.subplots(figsize=(7, 6))
 
     for results, label, color in [
         (baseline_results, "Baseline (H_lex only)", "#7b9ecc"),
@@ -56,7 +54,7 @@ def plot_roc_comparison(baseline_results, full_results):
 
 
 def plot_score_distributions(baseline_results, full_results):
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    _, axes = plt.subplots(1, 2, figsize=(13, 5))
 
     axes[0].hist(baseline_results["norm_scores"], bins=40, alpha=0.6, color="#7b9ecc", label="Normal")
     axes[0].hist(baseline_results["phish_scores"], bins=40, alpha=0.6, color="#e07b54", label="Phishing")
@@ -84,7 +82,6 @@ def plot_score_distributions(baseline_results, full_results):
 
 
 def plot_feature_space(full_results):
-    import json
     from src.features import extract_features
     from matplotlib.patches import Ellipse
 
@@ -103,11 +100,11 @@ def plot_feature_space(full_results):
     phish_x = [r["h_lex"] for r in phish_rec]
     phish_y = [r["h_syn"] for r in phish_rec]
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    _, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(norm_x, norm_y, alpha=0.35, s=12, color="#7b9ecc", label="Normal", zorder=2)
     ax.scatter(phish_x, phish_y, alpha=0.35, s=12, color="#e07b54", label="Phishing", zorder=2)
 
-    # Draw the Mahalanobis decision ellipse by recovering the covariance from sigma_inv_
+    # recover covariance from sigma_inv_ to draw the Mahalanobis decision ellipse
     cov = np.linalg.inv(detector.sigma_inv_)
     vals, vecs = np.linalg.eigh(cov)
     order = vals.argsort()[::-1]

@@ -1,0 +1,4 @@
+detector,features,auroc_clean,auroc_adversarial,delta
+D1,H_syn,0.4677,0.4923,-0.0246
+D2,H_lex,0.8087,0.8561,-0.0473
+D3,H_lex+H_syn,0.7136,0.7789,-0.0653
