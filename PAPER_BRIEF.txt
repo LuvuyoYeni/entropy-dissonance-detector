@@ -1,0 +1,732 @@
+PAPER_BRIEF.txt
+Research paper brief for: Entropy Dissonance: A Diagnostic Study of Lexical-Syntactic Phishing Detection
+Student: Luvuyo Yeni — NLP Honours, University of Johannesburg
+Supervisor: [not recorded]
+
+This brief contains everything a writer needs to produce the full research paper.
+No further questions need to be asked. No numbers should be invented.
+Where a finding is ambiguous or limited, this brief says so explicitly.
+
+================================================================================
+SECTION 1 — PROJECT OVERVIEW
+================================================================================
+
+WHAT THE PROJECT IS
+The project builds and evaluates a one-class anomaly detector for phishing email.
+"One-class" means the system is trained exclusively on legitimate (ham) email.
+No phishing examples are seen during training. At inference time, each sentence in
+a new email is scored; if the score exceeds a threshold, the sentence is flagged.
+
+The project computes two information-theoretic features per sentence:
+  H_lex — mean per-token surprisal under a custom trigram Laplace language model
+  H_syn — Shannon entropy over the spaCy dependency arc label distribution
+
+Three detectors are compared:
+  D1 — H_syn only (univariate Gaussian anomaly detector)
+  D2 — H_lex only (threshold at mean + 2 standard deviations)
+  D3 — (H_lex, H_syn) jointly, scored via Mahalanobis distance from the
+       bivariate Gaussian fitted on normal training sentences
+
+WHAT PROBLEM IT SOLVES
+Traditional phishing detectors use keyword lists or supervised classifiers.
+Keyword lists fail when attackers rotate vocabulary. Supervised classifiers
+require labelled phishing examples and cannot generalise to novel attack styles
+that have not been seen at training time. One-class anomaly detection avoids
+the labelling requirement entirely: if an email's statistical properties deviate
+from learned normality, it is flagged regardless of the specific vocabulary used.
+
+RESEARCH QUESTION
+Can the joint distribution of lexical surprisal (H_lex) and syntactic entropy
+(H_syn) per sentence, fitted only on legitimate email, detect phishing sentences
+as anomalies without any labelled phishing examples at training time?
+
+NOVEL CONTRIBUTION
+(1) The specific combination of trigram LM surprisal and dependency-label entropy
+    in a bivariate Gaussian one-class detector is not standard in prior work on
+    email anomaly detection. The term "entropy dissonance" refers to the proposed
+    asymmetry: phishing sentences inflate H_lex by using unusual vocabulary while
+    keeping syntactic structure conventional, leaving H_syn near normal.
+(2) The adversarial evaluation — WordNet synonym substitution — is an empirical
+    test of whether the lexical signal can be evaded by vocabulary rotation.
+(3) The D1 ablation (H_syn alone) provides a diagnostic component absent from
+    comparable prior work: it isolates H_syn's discriminative contribution and
+    explains why the joint model underperforms the H_lex-only baseline.
+
+THE COUNTERINTUITIVE CORE FINDING
+The hypothesis was: D3 (joint model) would outperform D2 (H_lex only). It does
+not. D3 AUROC = 0.7136; D2 AUROC = 0.8087. The D1 ablation explains why:
+H_syn AUROC = 0.4677, which is below chance, meaning H_syn is anti-discriminative
+on this corpus. Adding a non-discriminative feature degrades the joint score.
+This negative result is itself the scientific contribution — it identifies H_syn's
+failure mode and points toward what a better syntactic feature would need to do.
+
+================================================================================
+SECTION 2 — TECHNICAL DETAILS
+================================================================================
+
+--- SENTENCE TOKENISER (src/features.py:27–50) ---
+
+Regex pattern:
+  _SENT_SPLIT_RE = re.compile(r'(?<=[!?])\s+|(?<=[.])\s+(?=[A-Z])')
+
+Logic:
+  Always split after ! or ?
+  Split after . only when the next character is a capital letter
+  Before committing to a split, check the word immediately preceding the
+  punctuation: if it matches the abbreviation set or is a single letter
+  (initials), suppress the split
+
+Abbreviation set (31 entries, case-folded):
+  mr, mrs, ms, dr, prof, sr, jr, vs, etc, inc, ltd, corp, fig, vol, ed,
+  approx, est, dept, no, st, ave, jan, feb, mar, apr, jun, jul, aug, sep,
+  oct, nov, dec
+
+Implementation: uses finditer() to locate all candidate split positions, walks
+them in order, applies the abbreviation guard, and accumulates sentence strings
+between committed split points. Returns empty list for empty input.
+
+--- WORD TOKENISER (src/features.py:53–57) ---
+
+Regex pattern:
+  _WORD_RE = re.compile(r'[a-zA-Z]+')
+
+Function: word_tokenize(text) = _WORD_RE.findall(text)
+
+Keeps: alphabetic runs only
+Discards: punctuation, digits, underscores, mixed alphanumeric tokens
+Note: URLs and email addresses are stripped at the corpus loading stage
+(download_data.py clean() function), so they never reach the tokeniser.
+
+--- TRIGRAM LANGUAGE MODEL (src/features.py:60–104) ---
+
+Class: LaplaceTrigramModel
+Data structures: three Python Counter dicts
+  _unigrams: maps single word → count
+  _bigrams:  maps (word_{i-1}, word_i) → count
+  _trigrams: maps (word_{i-2}, word_{i-1}, word_i) → count
+
+fit(sentences) — single O(n) pass:
+  for each token at position i in each tokenised sentence:
+    _unigrams[tok] += 1
+    if i >= 1: _bigrams[(tok_{i-1}, tok)] += 1
+    if i >= 2: _trigrams[(tok_{i-2}, tok_{i-1}, tok)] += 1
+  _vocab_size = len(_unigrams)   [set after loop completes]
+
+score(word, context) — context is a tuple of 0, 1, or 2 preceding tokens:
+  V = _vocab_size (or 1 if unfitted)
+  if len(context) >= 2:
+    c_w   = _trigrams.get((context[-2], context[-1], word), 0)
+    c_ctx = _bigrams.get((context[-2], context[-1]), 0)
+  elif len(context) == 1:
+    c_w   = _bigrams.get((context[0], word), 0)
+    c_ctx = _unigrams.get(context[0], 0)
+  else:
+    c_w   = _unigrams.get(word, 0)
+    c_ctx = sum(_unigrams.values())
+  return (c_w + 1) / (c_ctx + V)
+
+Laplace smoothing formula applied at query time:
+  P(word | context) = (count(word, context) + 1) / (count(context) + V)
+where V is the vocabulary size (~40,000 distinct word types after training).
+
+Why MLE (no smoothing) failed:
+  Without smoothing, unseen trigrams receive P = 0. The compute_h_lex function
+  only appends a surprisal value when prob > 0 (see line 116). This silently
+  drops OOV tokens from the average. Phishing sentences contain unusual word
+  sequences — exactly the tokens that receive P = 0 under MLE. Their most
+  anomalous tokens are excluded from the H_lex average, pulling phishing scores
+  falsely toward the normal mean. Laplace smoothing fixes this: a zero-count
+  trigram receives P = 1 / (c_ctx + V). With V ≈ 40,000 and c_ctx = 0, this
+  gives P ≈ 0.000025, yielding surprisal ≈ 15.3 bits — correctly flagged.
+  The AUROC before this fix is not recorded in the codebase.
+
+--- H_lex (src/features.py:107–121) ---
+
+Formula:
+  H_lex = (1/n) × Σᵢ₌₁ⁿ⁻¹ [−log₂ P(wᵢ | wᵢ₋₂, wᵢ₋₁)]
+
+Note: H_lex is MEAN surprisal, NOT entropy. Do not use the word "entropy"
+when describing H_lex.
+
+Context window:
+  Loop runs from i=1 to len(tokens)-1 inclusive.
+  context = tuple(tokens[max(0, i - NGRAM_ORDER + 1) : i])
+  where NGRAM_ORDER = 3.
+  For i=1: context = (tokens[0],) — one token, bigram probability
+  For i=2: context = (tokens[0], tokens[1]) — two tokens, trigram probability
+  For i≥3: context = (tokens[i-2], tokens[i-1]) — always two tokens, trigram
+
+The function returns None if fewer than 2 alphabetic tokens. Upstream
+extract_features() discards None values.
+
+Stats on normal training data (D2 training split — 3,096 emails):
+  Mean H_lex: 12.570 bits
+  Std:         1.550 bits
+  Threshold (D2): 12.570 + 2 × 1.550 = 15.669 bits (set by BaselineDetector.fit, k=2.0)
+
+Stats on normal training data (D3 training split — 2,709 emails):
+  Mean H_lex (mu_[0]): 12.696 bits   [printed by JointEntropyDetector.fit]
+
+--- H_syn (src/features.py:124–138) ---
+
+Formula:
+  H_syn = −Σₖ pₖ × log₂(pₖ)
+where pₖ = count(label k) / total labels in the sentence.
+This is standard Shannon entropy over a discrete label distribution.
+
+What spaCy provides:
+  NLP = spacy.load("en_core_web_sm", disable=["ner"])
+  doc = NLP(sentence)
+  labels = [token.dep_ for token in doc if token.dep_ != ""]
+
+Arc label examples (Universal Dependencies subset used by en_core_web_sm):
+  nsubj    — nominal subject
+  dobj     — direct object
+  det      — determiner
+  prep     — prepositional modifier
+  ROOT     — root (typically the main verb)
+  amod     — adjectival modifier
+  advmod   — adverbial modifier
+  punct    — punctuation
+  pobj     — object of preposition
+  aux      — auxiliary verb
+
+A sentence with many diverse label types has high H_syn (high variety).
+A sentence dominated by one or two roles has low H_syn (low variety).
+Returns None if fewer than 2 labels; this sentence is dropped upstream.
+
+Stats on normal training sentences:
+  Mean H_syn: 3.401 bits    [reported by analysis/feature_correlation.py]
+
+Stats on phishing test sentences:
+  Mean H_syn: approximately 3.374 bits   [inferred from 0.027-bit difference]
+  Mean difference: 0.027 bits (< 2% of one standard deviation)
+
+Pearson correlation between H_lex and H_syn:
+  Normal training set:   r = 0.44 (moderate positive)
+  Phishing test set:     r = 0.08 (near zero)
+  Both values from analysis/feature_correlation.py, confirmed reproducible.
+  This structural difference (r=0.44 vs r=0.08) is identified in the code as
+  a "potentially useful finding for the paper" that is not yet exploited.
+
+--- BIVARIATE GAUSSIAN (src/full_system.py:14–79) ---
+
+Mean vector:
+  self.mu_ = X.mean(axis=0)
+  mu_ = [H_lex: 12.696, H_syn: 3.401]   [from code printout]
+
+Covariance matrix — computed manually (no numpy.cov()):
+  n = len(X)
+  diff = X - self.mu_
+  cov = np.zeros((2, 2))
+  for row in diff:
+      for i in range(2):
+          for j in range(2):
+              cov[i][j] += row[i] * row[j]
+  cov = cov / (n - 1)    # unbiased sample covariance
+
+Fitted covariance matrix values:
+  cov = [[1.4950,  0.3306],
+         [0.3306,  0.3769]]
+
+Interpretation:
+  cov[0][0] = 1.4950: variance of H_lex on training set (std ≈ 1.222 bits)
+  cov[1][1] = 0.3769: variance of H_syn on training set (std ≈ 0.614 bits)
+  cov[0][1] = cov[1][0] = 0.3306: covariance (captures r=0.44 correlation)
+
+Matrix health (from analysis/feature_correlation.py):
+  Condition number: approximately 5.5 (well-conditioned; threshold for concern = 30)
+  Determinant: approximately 0.453 (well above zero; no near-singularity)
+  np.linalg.pinv fallback in the code was never triggered.
+
+Inverse:
+  self.sigma_inv_ = np.linalg.inv(cov)   [pinv fallback never triggered]
+
+--- MAHALANOBIS DISTANCE (src/full_system.py:81–83) ---
+
+Formula:
+  D(x) = √((x − μ)ᵀ Σ⁻¹ (x − μ))
+
+Code:
+  def _mahalanobis(self, h_lex, h_syn):
+      x = np.array([h_lex, h_syn]) - self.mu_
+      return float(np.sqrt(x @ self.sigma_inv_ @ x))
+
+Why Mahalanobis and not Euclidean:
+  H_lex and H_syn are on different scales (H_lex range ~11–15 bits; H_syn range
+  ~2–4 bits). Euclidean distance is dominated by the larger-scale axis.
+  Mahalanobis normalises by the covariance matrix, so both features contribute
+  proportionally to their variance. It also accounts for the positive correlation
+  (r=0.44), rotating the distance metric to align with the principal axes of the
+  normal data cloud.
+
+Threshold selection (tau):
+  Primary method: F1-optimal threshold search on the validation set.
+    All thresholds from sklearn roc_curve() are tried. For each, TP, FP, FN are
+    computed manually and F1 is calculated. The threshold maximising F1 is selected.
+  Safety fallback: If the F1-optimal threshold would flag > 80% of all validation
+    sentences as positive (positive_rate > 0.80), fall back to the 95th percentile
+    of Mahalanobis distances on normal training data.
+  Fitted tau value: 1.4625   [from results/three_way_comparison.csv context]
+
+--- ADVERSARIAL EXPERIMENT (src/adversarial.py) ---
+
+Method:
+  SUBSTITUTION_RATE = 0.30 (30% of eligible content words per sentence)
+  RANDOM_SEED = 42
+  Tokeniser: NLTK word_tokenize + nltk.pos_tag  (NOT the custom regex tokeniser)
+  POS tags eligible for substitution:
+    Nouns:      NN, NNS, NNP, NNPS → wordnet.NOUN
+    Verbs:      VB, VBD, VBG, VBN, VBP, VBZ → wordnet.VERB
+    Adjectives: JJ, JJR, JJS → wordnet.ADJ
+  Adverbs, determiners, prepositions, pronouns are NOT eligible.
+
+Synonym selection (_get_synonym):
+  For each eligible word: iterate synsets for that word+POS via wordnet.synsets()
+  Take the first lemma from the first synset whose:
+    (a) name is different from the original word
+    (b) name contains only alphabetic characters (no underscores or hyphens)
+  Preserve capitalisation: if original word starts with uppercase, capitalise
+  the replacement. If no synonym found, keep original word.
+
+Obfuscation:
+  For each sentence: select n_replace = max(1, round(n_eligible × 0.30)) indices
+  at random (using seeded rng.sample()). Replace those tokens with their synonyms.
+  Sentences are joined back with spaces. Full text is joined from obfuscated
+  sentences using NLTK sent_tokenize (not the custom tokeniser).
+
+Known inconsistency:
+  adversarial.py uses NLTK word_tokenize and sent_tokenize for the substitution
+  step. features.py uses a custom regex tokeniser for all scoring. The obfuscated
+  text is passed back through the scoring pipeline using the custom tokeniser.
+  Token boundaries may differ slightly between the two tokenisers. This is a
+  known limitation acknowledged in the WALKTHROUGH_SCRIPT.
+
+Full adversarial results (from results/three_way_comparison.csv):
+  Detector  Features      Clean AUROC  Adversarial AUROC  Delta
+  D1        H_syn         0.4677       0.4923             -0.0246
+  D2        H_lex         0.8087       0.8561             -0.0473
+  D3        H_lex+H_syn   0.7136       0.7789             -0.0653
+
+Delta = clean - adversarial. NEGATIVE delta means adversarial AUROC was higher
+(i.e., the attack improved detectability — the opposite of the intended effect).
+
+Explanation for improvement under attack:
+  WordNet synonyms tend toward formal or technical register. When a synonym
+  replaces a word in a phishing sentence, the resulting three-word trigram
+  sequence is very likely to have zero count in the ham-trained language model
+  (the training corpus is informal workplace email from the early 2000s).
+  Laplace assigns P = 1 / (c_ctx + V) ≈ 1/40,000 to zero-count trigrams,
+  giving surprisal ≈ 15.3 bits. This spikes H_lex for the substituted sentence,
+  pushing it further from the normal distribution, not closer.
+  The attack does not help phishing evade detection. It makes it more detectable.
+
+Hypothesis status:
+  The adversarial.py code checks: if d2_degradation > d3_degradation → print
+  "consistent with stated hypothesis". Both degradation values are negative
+  (both systems improved). Since -0.0473 > -0.0653, the FIRST branch fires and
+  the code prints "consistent with the stated hypothesis."
+  This is arithmetically triggered but substantively misleading: the hypothesis
+  was that D2 would degrade under attack while D3 would be more robust. Neither
+  degraded. D3 improved MORE than D2 (+0.0653 vs +0.0474). The hypothesis
+  assumed degradation would occur. It did not.
+  The paper must not claim the hypothesis was confirmed. It must explain the
+  OOV inflation mechanism and present the improvement as the actual finding.
+
+================================================================================
+SECTION 3 — DATASETS
+================================================================================
+
+LEGITIMATE EMAIL — SPAMASSASSIN EASY_HAM
+Source: spamassassin.apache.org/old/publiccorpus/
+Files downloaded:
+  20030228_easy_ham.tar.bz2
+  20030228_easy_ham_2.tar.bz2
+Format: .tar.bz2 archives of individual email files (RFC 2822 format)
+Date: emails from approximately 2002–2003
+
+PHISHING EMAIL — NAZARIO PHISHING CORPUS
+Source: GitHub repository shaeferd/Phishing-Detection, file phishing3.mbox
+Format: Unix mbox file (From-separated email records)
+Date: approximately 2002–2006
+Note: non-ASCII bytes in phishing email headers make Python's mailbox.mbox
+      module fail; download_data.py parses the mbox line-by-line instead.
+
+TEXT EXTRACTION (download_data.py:extract_text_from_email)
+  Uses Python's email.message_from_bytes()
+  For multipart messages: extracts all text/plain parts
+  Joins body parts with single space
+  Decodes bytes with utf-8, errors='ignore'
+
+CLEANING (download_data.py:clean)
+  Strip URLs: re.sub(r'http\S+|www\.\S+', ' ', text)
+  Strip email addresses: re.sub(r'\S+@\S+', ' ', text)
+  Collapse whitespace: re.sub(r'\s+', ' ', text).strip()
+  Filter: discard any email where cleaned text is <= 50 characters
+
+FINAL CORPUS SIZES
+  Ham (legitimate):  3,871 emails
+  Phishing:          1,293 emails
+
+TRAIN / TEST / VALIDATION SPLITS (all random_state=42)
+  D2 (BaselineDetector):
+    norm_train: 3,096 emails (80% of 3,871)
+    norm_test:    775 emails (20% of 3,871)
+    phish_test:   259 emails (20% of 1,293)
+    [phish_train not used — D2 trains on ham only]
+
+  D3 (JointEntropyDetector):
+    norm_trainval: 3,096 emails (80% of 3,871)
+    norm_train:    2,709 emails (87.5% of 3,096 = ~2,709)
+    norm_val:        387 emails (12.5% of 3,096 = ~387)
+    norm_test:       775 emails (same as D2)
+    phish_val:       162 emails (12.5% of 1,293)
+    phish_test:      259 emails (same as D2)
+
+  D1 (D1SynDetector):
+    Same split as D2: norm_train 3,096, norm_test 775, phish_test 259
+
+SENTENCE-LEVEL COUNTS (approximate, from training runs)
+  D2 test set:  approximately 7,000 normal sentences, 1,559 phishing sentences
+  D3 test set:  approximately 6,672 normal sentences, 1,546 phishing sentences
+  (slight difference because D3 uses fewer training emails, affecting LM vocabulary
+  and which sentences pass the len >= 20 character filter)
+
+SENTENCE FILTER
+  extract_features() (features.py:146) drops sentences where len(sent) < 20
+  characters. This is a character count, not a token count. Short sentences
+  are excluded because H_syn computed over 1–3 tokens is unreliable (high
+  small-sample bias in Shannon entropy estimation). No Miller-Madow correction
+  is applied — this is a limitation.
+
+================================================================================
+SECTION 4 — RESULTS (ALL NUMBERS)
+================================================================================
+
+--- D1: H_syn ONLY ---
+AUROC (clean):       0.4677
+AUROC (adversarial): 0.4923
+Delta (clean - adv): -0.0246
+Interpretation: below chance. D1 scores phishing sentences LOWER than normal
+sentences. Complex normal sentences (long, diverse clause types) score higher
+on H_syn than average phishing sentences, inverting the ranking.
+D1 classification report not stored in the codebase; only AUROC is in the CSV.
+
+--- D2: H_lex ONLY ---
+AUROC (clean):       0.8087
+AUROC (adversarial): 0.8561
+Delta (clean - adv): -0.0473
+H_lex mean (train):  12.570 bits
+H_lex std (train):    1.550 bits
+Threshold:           15.669 bits (= mean + 2 × std, k=2.0)
+
+Classification report at threshold 15.669 on test set:
+  Class    Precision  Recall  F1
+  Normal   0.82       1.00    0.90
+  Phishing 0.00       0.00    0.00
+  Accuracy: 0.82
+
+NOTE: Phishing precision/recall/F1 are all 0.00 because the fixed threshold
+of 15.669 is too conservative at the sentence level — very few phishing sentences
+exceed it. AUROC = 0.8087 is the correct discriminative power measure.
+
+--- D3: JOINT H_lex + H_syn ---
+AUROC (clean):       0.7136
+AUROC (adversarial): 0.7789
+Delta (clean - adv): -0.0653
+mu_:                 [H_lex: 12.696, H_syn: 3.401]
+Covariance matrix:   [[1.4950, 0.3306], [0.3306, 0.3769]]
+Condition number:    approximately 5.5 (well-conditioned)
+Tau (threshold):     1.4625
+
+Classification report at tau=1.4625 on test set:
+  Class    Precision  Recall  F1
+  Normal   0.93       0.57    0.71
+  Phishing 0.30       0.81    0.44
+  Accuracy: 0.62
+
+--- CORRELATION ANALYSIS (analysis/feature_correlation.py) ---
+Pearson r (H_lex, H_syn) on normal training sentences:  0.44
+Pearson r (H_lex, H_syn) on phishing test sentences:    0.08
+Difference: 0.36 (flagged by code as a "potentially useful finding")
+This means the two classes occupy structurally different regions of joint
+feature space even though their H_syn marginals overlap almost completely.
+
+--- ADVERSARIAL RESULTS TABLE ---
+Detector  Features      Clean AUROC  Adv AUROC  Change
+D1        H_syn         0.4677       0.4923     +0.0246
+D2        H_lex         0.8087       0.8561     +0.0474
+D3        H_lex+H_syn   0.7136       0.7789     +0.0653
+All three improved under the synonym substitution attack.
+
+================================================================================
+SECTION 5 — WHAT THE PAPER MUST ARGUE
+================================================================================
+
+CLAIM 1: H_lex from a custom trigram Laplace LM achieves AUROC 0.8087 for
+one-class phishing detection without any labelled phishing examples.
+Evidence: D2 AUROC = 0.8087 on 775 normal and 259 phishing held-out test emails.
+Status: FULLY SUPPORTED. Argue this strongly.
+
+CLAIM 2: H_syn (dependency-label entropy) carries no discriminative signal for
+phishing detection on the SpamAssassin/Nazario corpus at the sentence level.
+Evidence: D1 AUROC = 0.4677 (below chance). Mean H_syn difference = 0.027 bits.
+Status: FULLY SUPPORTED. This is the primary diagnostic contribution.
+Framing: Not a failure of the system — a positive finding that identifies H_syn's
+limitations on this data and points toward better syntactic features.
+
+CLAIM 3: Adding a non-discriminative feature to a Mahalanobis detector degrades
+performance (D3 AUROC = 0.7136 < D2 AUROC = 0.8087).
+Evidence: Direct comparison of AUROC values. Explained mechanistically by D1.
+Status: FULLY SUPPORTED.
+
+CLAIM 4: The correlation structure of (H_lex, H_syn) differs between normal
+(r=0.44) and phishing (r=0.08) sentences, suggesting that the joint distribution
+carries information not captured by the H_syn marginal alone.
+Evidence: analysis/feature_correlation.py output.
+Status: SUPPORTED AS AN OBSERVATION. The paper should present this as a finding
+and future direction, NOT as a result exploited by the current system.
+
+CLAIM 5: Synonym substitution (30% rate, WordNet) increases AUROC for all three
+detectors due to OOV trigram inflation in the ham-trained language model.
+Evidence: All three AUROC values increase; OOV mechanism is explained.
+Status: SUPPORTED. The paper must NOT frame this as "the system is robust to
+synonym attacks." It must frame this as: "synonym substitution backfires because
+WordNet replacements create low-probability trigrams in a ham-trained LM."
+
+CLAIM 6: The system is a genuine one-class anomaly detector — no labelled
+phishing data is used at any stage of training.
+Evidence: Both D2 and D3 fit() methods receive only normal_texts.
+Status: FULLY SUPPORTED and central to the novelty argument.
+
+DO NOT CLAIM:
+- That D3 is more robust than D2 to adversarial attack (both improved; D3
+  improved more, but because its score is further from the threshold, not because
+  it is architecturally more robust).
+- That the adversarial hypothesis was confirmed in the conventional sense.
+- That H_syn contributes discriminative signal in the joint model.
+- That the 0.8087 AUROC demonstrates the system is deployment-ready (it does not
+  — no document-level aggregation evaluation was done, and the corpus is 20+ years
+  old).
+
+================================================================================
+SECTION 6 — HONEST LIMITATIONS
+================================================================================
+
+LIMITATION 1: H_syn is non-discriminative on this corpus.
+H_syn AUROC = 0.4677, below random chance. The entire research hypothesis
+(that joint modelling would outperform lexical-only) is falsified by the data.
+The paper must acknowledge this. It is NOT appropriate to state "D3 shows
+comparable performance to D2" — D3 is worse by 0.095 AUROC points.
+
+LIMITATION 2: The adversarial result is counterintuitive and not what the
+experiment was designed to show.
+The experiment was designed to test whether synonym rotation could evade the
+detector. Both systems improved under attack. The printed output in adversarial.py
+says "consistent with the stated hypothesis" only in an arithmetic sense:
+D2 improved less than D3 (+0.0474 vs +0.0653). But the hypothesis assumed
+degradation, not improvement. The paper must give the OOV inflation explanation.
+
+LIMITATION 3: Sentence-level AUROC as the evaluation metric is imprecise.
+One email contributes multiple test points (multiple sentences). Sentences from
+the same email are not independent. The class ratio at the sentence level
+(approximately 4:1–5:1 normal-to-phishing) is not explicitly reported or
+accounted for. No document-level aggregation strategy (e.g., max sentence score,
+mean score, fraction above threshold) was evaluated.
+
+LIMITATION 4: Corpus age and distribution.
+SpamAssassin and Nazario corpora are from 2002–2006. Modern phishing email,
+especially AI-generated phishing, has different statistical properties. The
+system's behaviour on contemporary phishing is unknown.
+
+LIMITATION 5: H_syn small-sample bias.
+Shannon entropy estimated from 5–10 dependency labels has known upward bias
+proportional to (k-1)/(2n) (Miller-Madow correction). No correction is applied.
+This adds noise to H_syn estimates for short sentences.
+
+LIMITATION 6: Sentence filter is calibrated by characters, not tokens.
+extract_features() drops sentences shorter than 20 characters. A 4-word
+sentence like "Click here now please." (22 characters) passes the filter
+but has too few tokens for reliable H_syn estimation.
+
+LIMITATION 7: Tokeniser inconsistency in the adversarial module.
+adversarial.py uses NLTK word_tokenize and sent_tokenize. features.py uses
+the custom regex tokeniser. The obfuscated text passes through both. Token
+boundaries may differ at punctuation and contractions. The effect is likely
+minor but introduces noise in the adversarial evaluation.
+
+LIMITATION 8: D3 threshold selection.
+The F1-optimal threshold from the validation set (tau=1.4625) may overfit
+the validation distribution. No cross-validation was performed.
+
+================================================================================
+SECTION 7 — REFERENCES NEEDED
+================================================================================
+
+The paper needs at least 10 journal or conference references.
+Three are verified (full citations known).
+The remaining must be located by the writer.
+
+VERIFIED REFERENCES:
+[V1] Chandola, V., Banerjee, A., and Kumar, V. (2009). Anomaly detection:
+     A survey. ACM Computing Surveys, 41(3), 1–58.
+     USE FOR: motivating one-class anomaly detection; comparing to supervised
+     classification baselines.
+
+[V2] Fette, I., Sadeh, N., and Tomasic, A. (2007). Learning to detect phishing
+     emails. In Proceedings of WWW 2007.
+     USE FOR: prior work on phishing detection; comparison to supervised
+     approaches that require labelled examples.
+
+[V3] Salloum, S., Gaber, T., Vadera, S., and Shaalan, K. (2021). A systematic
+     literature review on phishing email detection using natural language
+     processing techniques. Procedia Computer Science, 189, 310–316.
+     USE FOR: survey of NLP-based phishing detection; positioning this work
+     relative to lexical-only vs structural methods.
+
+REFERENCES NEEDED (locate and provide full citations):
+[N1] n-gram language model foundation. Need: the standard textbook or seminal
+     paper defining trigram language models, Laplace smoothing, and perplexity.
+     CANDIDATES: Jurafsky, D. and Martin, J. H. (2023). Speech and Language
+     Processing, 3rd ed. (Chapter 3: N-gram Language Models). — OR —
+     Manning, C. and Schütze, H. (1999). Foundations of Statistical NLP.
+     USE FOR: justifying the trigram LM design and Laplace smoothing formula.
+
+[N2] Shannon entropy foundation. Need: Shannon's original paper on information
+     theory, or a standard textbook definition.
+     CANDIDATES: Shannon, C. E. (1948). A mathematical theory of communication.
+     Bell System Technical Journal, 27, 379–423.
+     USE FOR: defining H_lex and H_syn formulas in the methodology section.
+
+[N3] Mahalanobis distance. Need: the original paper or a standard reference.
+     CANDIDATES: Mahalanobis, P. C. (1936). On the generalised distance in
+     statistics. Proceedings of the National Institute of Sciences of India, 2(1).
+     USE FOR: justifying D3's scoring function over Euclidean distance.
+
+[N4] SpamAssassin corpus. Need: a citable reference to the SpamAssassin public
+     corpus. The project URL is spamassassin.apache.org/old/publiccorpus/ —
+     a formal citation or white paper is needed.
+     CANDIDATE: Cormack, G. V. (2007). TREC 2007 Spam Track Overview. TREC.
+     Or cite the SpamAssassin documentation page directly as a web reference.
+
+[N5] Nazario phishing corpus. Need: the original publication describing the
+     Nazario corpus.
+     CANDIDATE: Nazario, J. (2004). Phishing corpus. Documented at
+     monkey.org/~jose/wiki/doku.php. Alternatively cited as a dataset reference
+     from the GitHub repository.
+
+[N6] Dependency parsing and arc labels. Need: a reference describing the
+     Universal Dependencies annotation scheme or the spaCy parser.
+     CANDIDATES: Honnibal, M. and Montani, I. (2017). spaCy 2: Natural language
+     understanding with Bloom embeddings, convolutional neural networks and
+     incremental parsing. — OR —
+     Nivre, J. et al. (2016). Universal Dependencies v1: A multilingual treebank
+     collection. LREC 2016.
+     USE FOR: justifying H_syn as a syntactic feature and defining arc labels.
+
+[N7] Syntactic structure in adversarial text / authorship attribution.
+     Need: prior work using dependency-label distributions for text analysis.
+     CANDIDATES: Gamon, M. (2004). Linguistic correlates of style: authorship
+     classification with deep linguistic analysis features. COLING 2004.
+     USE FOR: situating H_syn in prior NLP feature work.
+
+[N8] WordNet. Need: the standard WordNet citation.
+     CANDIDATES: Miller, G. A. (1995). WordNet: A lexical database for English.
+     Communications of the ACM, 38(11), 39–41. — OR —
+     Fellbaum, C. (Ed.) (1998). WordNet: An Electronic Lexical Database. MIT Press.
+     USE FOR: describing the adversarial synonym substitution method.
+
+[N9] One-class or novelty detection in security. Need: a reference applying
+     one-class classification to network or email security.
+     CANDIDATES: Perdisci, R. et al. (2006). Using an ensemble of one-class SVM
+     classifiers to harden payload-based anomaly detection systems. ICDM 2006.
+     — OR — Maes, S. et al. (2002). Naive Bayes vs. decision trees in intrusion
+     detection systems. ACM SAC 2002.
+     USE FOR: justifying the one-class approach for novel attack detection.
+
+[N10] Surprisal / language model anomaly detection in text. Need: a paper using
+      per-token surprisal or LM perplexity to detect anomalous text.
+      CANDIDATES: Lau, J. H. et al. (2020). How furiously can colourless green
+      ideas sleep? Sentence acceptability in context. TACL 2020.
+      — OR — Berger, A. et al. (1996). A maximum entropy approach to natural
+      language processing. Computational Linguistics, 22(1), 39–71.
+      USE FOR: grounding H_lex in the NLP surprisal literature.
+
+TOTAL REFERENCE SLOTS: 13 (3 verified + 10 needed). This exceeds the minimum
+of 10 required by the rubric, providing buffer.
+
+================================================================================
+SECTION 8 — PAPER STRUCTURE REQUIREMENTS
+================================================================================
+
+FORMAT: LNCS (Lecture Notes in Computer Science)
+  20% mark deduction if format is not followed.
+  LNCS template available at Springer (springernature.com/lncs — look for
+  LaTeX template or Word template). Use 10pt font, two-column not required for
+  LNCS proceedings paper.
+
+LENGTH: 10 pages including references.
+
+REQUIRED SECTIONS (from rubric):
+  1. Abstract (~150–200 words)
+  2. Introduction
+  3. Problem Background
+  4. Literature Review
+  5. Proposed Solution (methodology)
+  6. Experimentation
+  7. Results
+  8. Discussion
+  9. Conclusion
+  References
+
+SUGGESTED PAGE ALLOCATION (for 10-page limit):
+  Abstract: half page
+  Introduction: 1 page
+  Problem Background: 0.5–1 page
+  Literature Review: 1–1.5 pages
+  Proposed Solution: 2–2.5 pages (this is the largest section — full methodology)
+  Experimentation: 0.5–1 page (corpus stats, split sizes, evaluation metric choice)
+  Results: 1–1.5 pages (tables + figures; include ROC curve comparison if space allows)
+  Discussion: 1 page (why D3 < D2; OOV mechanism; correlation structure finding)
+  Conclusion + References: 1 page
+
+FIGURES AND TABLES TO INCLUDE:
+  Table 1: Corpus statistics (ham / phishing, emails and sentences, post-filter)
+  Table 2: Train / test / validation split sizes
+  Table 3: Main AUROC results (D1, D2, D3 — clean and adversarial)
+  Table 4: Classification report for D2 and D3 at their respective thresholds
+  Figure 1: ROC curve comparison (D2 vs D3 on test set)
+  Figure 2: Feature space scatter (H_lex vs H_syn — optional, may not fit in 10 pages)
+
+KEY NUMBERS TO CITE VERBATIM IN THE PAPER (do not approximate):
+  D1 AUROC: 0.4677          D1 adversarial: 0.4923
+  D2 AUROC: 0.8087          D2 adversarial: 0.8561
+  D3 AUROC: 0.7136          D3 adversarial: 0.7789
+  D2 threshold: 15.669 bits (= 12.570 + 2 × 1.550)
+  D3 threshold tau: 1.4625
+  Covariance matrix: [[1.4950, 0.3306], [0.3306, 0.3769]]
+  Mu vector: [12.696, 3.401]
+  Pearson r (normal): 0.44
+  Pearson r (phishing): 0.08
+  Ham corpus size: 3,871 emails
+  Phishing corpus size: 1,293 emails
+  Test set: 775 normal emails, 259 phishing emails
+
+ABSTRACT MUST COVER:
+  Problem: phishing detection without labelled attack data
+  Method: one-class anomaly detection using H_lex (trigram surprisal) and
+          H_syn (dependency-label entropy) in a bivariate Gaussian
+  Key result: D2 (H_lex only) AUROC = 0.8087; D3 (joint) AUROC = 0.7136
+  Key finding: H_syn is non-discriminative (D1 AUROC = 0.4677); adversarial
+               synonym substitution increases detectability due to OOV inflation
+
+DISCUSSION MUST ADDRESS:
+  (a) Why D3 < D2: D1 AUROC = 0.4677 proves H_syn adds noise, not signal
+  (b) Why adversarial attack increased AUROC: OOV trigram inflation mechanism
+  (c) Correlation structure finding: r=0.44 (normal) vs r=0.08 (phishing) as
+      evidence that the joint space carries information not yet exploited
+  (d) Limitations: corpus age, sentence-level evaluation, H_syn bias
+
+================================================================================
+END OF BRIEF
+================================================================================

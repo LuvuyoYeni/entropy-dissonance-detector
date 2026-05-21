@@ -1,18 +1,4 @@
-"""
-Diagnostic: Pearson and Spearman correlation between H_lex and H_syn.
 
-Uses the exact same data split and feature-extraction path as
-evaluate_full_system() in src/full_system.py.  Nothing is modified;
-this file is read-only analysis.
-
-Feature source:
-  - src/features.py  :: build_language_model, extract_features
-Data split (mirrors full_system.py lines 96-99):
-  - norm_train  -> LM fit + Gaussian fit   (this is what we correlate)
-  - phish_test  -> correlation on held-out phishing set
-Unit: sentences (extract_features returns one record per sentence that
-  passes the len >= 20 chars filter inside extract_features).
-"""
 
 import json
 import sys

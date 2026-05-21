@@ -1,89 +1,41 @@
 # Entropy Dissonance Detector
 
-Phishing email detection using bivariate entropy anomaly scoring, built for the Honours NLP module at the University of Johannesburg. Two entropy signals are computed per sentence: **H_lex** (mean per-token surprisal under a custom trigram Laplace language model) and **H_syn** (Shannon entropy over spaCy dependency arc labels). A bivariate Gaussian is fitted on legitimate email; new sentences are scored by their Mahalanobis distance from that distribution. Sentences that are jointly anomalous in both signals are flagged as phishing. An adversarial evaluation is also included, which applies WordNet synonym substitution to phishing test sentences and measures how much each detector's AUROC degrades.
+I built this for my Honours NLP module at the University of Johannesburg to see whether phishing emails could be detected using entropy mismatch instead of standard keyword-heavy spam filtering. 
 
-Two systems are compared:
+The idea is simple: phishing emails often sound "wrong" before they look wrong. Instead of relying only on suspicious words, I measure how statistically unusual a sentence is—both lexically and syntactically.
 
-- **D2 (baseline)** — H_lex threshold only
-- **D3 (full system)** — joint Mahalanobis distance on (H_lex, H_syn)
+### How it works
+Each sentence gets two signals:
+* **$H_{lex}$**: Average token surprisal from a custom trigram Laplace language model.
+* **$H_{syn}$**: Shannon entropy over spaCy dependency arc labels.
 
-## Project structure
+I fit a bivariate Gaussian on legitimate email, then score new sentences using Mahalanobis distance. If a sentence drifts too far from the “normal email” distribution, the system flags it as phishing.
 
-```
-entropy-dissonance-detector/
-├── src/
-│   ├── features.py       # custom sentence/word tokenisers, trigram LM, H_lex, H_syn
-│   ├── baseline.py       # D2 detector and evaluation
-│   ├── full_system.py    # D3 detector and evaluation
-│   └── adversarial.py    # synonym-substitution robustness experiment
-├── download_data.py      # downloads and parses both corpora
-├── evaluate.py           # runs all three experiments, prints results, saves plots
-└── requirements.txt
-```
+**There are two detectors in the repo:**
+1. **D2:** Baseline using only $H_{lex}$.
+2. **D3:** Full system using joint Mahalanobis distance on ($H_{lex}$, $H_{syn}$).
 
-## Setup
+I also included an adversarial evaluation that attacks the lexical signal using WordNet synonym substitution to see how robust each detector actually is.
 
-Requires **Python 3.11**. Python 3.13 is not supported (spaCy binary wheels are unavailable for it).
+---
 
-```bash
-# create and activate a virtual environment
-python3.11 -m venv venv311
-source venv311/bin/activate        # macOS / Linux
-# venv311\Scripts\activate         # Windows
+### Project Structure
 
-# install dependencies
-pip install -r requirements.txt
+The project is organized into a few core scripts and a source directory for the logic:
 
-# download the spaCy English model
-python -m spacy download en_core_web_sm
-```
+* **src/**: Contains the engine of the project, including `features.py` (trigram model and entropy calculations), `baseline.py`, `full_system.py`, and the `adversarial.py` experiment.
+* **download_data.py**: Handles downloading and parsing the SpamAssassin and Nazario corpora.
+* **evaluate.py**: The main entry point. This runs the baseline, full system, and adversarial tests in sequence.
+* **requirements.txt**: List of necessary libraries.
 
-## Download the data
+---
 
-Run once before anything else:
+### Getting Started
 
-```bash
-python download_data.py
-```
+**Prerequisites:** Requires **Python 3.11**. 
 
-This fetches:
-- SpamAssassin `easy_ham` + `easy_ham_2` (~3 900 legitimate emails)
-- Nazario `phishing3.mbox` (~1 300 phishing emails)
-
-Processed data is saved to `data/processed/ham.json` and `data/processed/phishing.json`. The raw archives are saved to `data/raw/` and neither directory is tracked by git.
-
-## Run the system
-
-```bash
-python evaluate.py
-```
-
-This runs all three stages in sequence:
-
-1. D2 baseline evaluation (H_lex only)
-2. D3 full system evaluation (joint Mahalanobis)
-3. Adversarial experiment (synonym substitution on phishing test set)
-
-## Expected output
-
-Console output shows AUROC scores and classification reports for D2 and D3, followed by the adversarial robustness summary. Four plots are saved to `plots/`:
-
-| File | Contents |
-|------|----------|
-| `roc_comparison.png` | ROC curves for D2 and D3 |
-| `score_distributions.png` | H_lex and Mahalanobis score histograms |
-| `feature_space.png` | 2-D scatter of (H_lex, H_syn) with decision ellipse |
-| `adversarial_comparison.png` | Bar chart of AUROC before/after obfuscation |
-
-Approximate AUROC results:
-
-| System | AUROC |
-|--------|-------|
-| D2 Baseline (H_lex only) | 0.77 |
-| D3 Full System (Joint Mahalanobis) | 0.68 |
-
-D2 outperforms D3 because H_syn does not separate the classes well on the Nazario corpus — phishing emails vary their vocabulary more than their grammatical structure, so the lexical signal carries most of the discriminative power. The adversarial experiment tests whether synonym substitution degrades D2 more than D3, since replacing words attacks the lexical signal while leaving syntactic structure intact.
-
-## Module
-
-IT08X87 — Natural Language Processing, University of Johannesburg
+1. **Setup environment:**
+   ```bash
+   python3.11 -m venv venv311
+   source venv311/bin/activate  # macOS / Linux
+   # venv311\Scripts\activate   # Windows

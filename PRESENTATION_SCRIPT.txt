@@ -1,0 +1,179 @@
+PRESENTATION SCRIPT — Entropy Dissonance: A Diagnostic Study of Lexical-Syntactic Phishing Detection
+Luvuyo Yeni — NLP Honours, University of Johannesburg
+
+Approximate total time: 18–22 minutes
+Each slide has an estimated time in brackets.
+
+-------------------------------------------------------------------------------
+
+SLIDE 1 — TITLE  [~30 seconds]
+
+Good morning. My project is called Entropy Dissonance: A Diagnostic Study of Lexical-Syntactic Phishing Detection.
+
+The core idea is this: I wanted to build a system that can detect phishing email without ever seeing a single phishing example during training. Instead of teaching it what phishing looks like, I taught it what normal email looks like — and then flagged anything that deviated from that.
+
+-------------------------------------------------------------------------------
+
+SLIDE 2 — PROBLEM STATEMENT  [~90 seconds]
+
+Phishing attacks work through social engineering. The attacker writes a convincing email that manipulates the recipient into clicking a link or surrendering credentials. There is no malware, no file attachment — just text that looks legitimate.
+
+The standard defences have a well-known weakness. Keyword filters look for words like "verify" or "click here," but an attacker who knows the filter can simply rotate their vocabulary to avoid those words while keeping the same deceptive message. Supervised classifiers are better, but they require labelled examples of phishing. If a novel attack style appears that your classifier has never seen, it will not know what to flag.
+
+One-class anomaly detection sidesteps this entirely. You train only on legitimate email. At test time, any email whose statistical properties fall outside what you learned from normal data gets flagged. The question this project asks is: which statistical properties should I measure? I chose two, both based on information theory — lexical surprisal and syntactic entropy.
+
+-------------------------------------------------------------------------------
+
+SLIDE 3 — RESEARCH HYPOTHESIS  [~90 seconds]
+
+The hypothesis is what I am calling entropy dissonance.
+
+In normal email, the two signals I measure — lexical surprisal and syntactic entropy — tend to move together. They have a learnable joint distribution. Phishing text, I hypothesised, breaks that joint structure in a characteristic way: unusual vocabulary pushes lexical surprisal up, but the grammatical structure stays conventional, so syntactic entropy remains near normal.
+
+The prediction was that a model of both signals together would outperform a model of lexical surprisal alone. The experimental results challenge that prediction, and understanding exactly why is the main diagnostic contribution of this project.
+
+-------------------------------------------------------------------------------
+
+SLIDE 4 — SYSTEM ARCHITECTURE  [~90 seconds]
+
+I built and evaluated two detectors.
+
+D2 is the baseline. It takes raw email, splits it into sentences, tokenises those sentences, runs them through a trigram language model to get a per-sentence mean surprisal score, and flags any sentence where that score exceeds a threshold.
+
+D3 is the full system. It computes both features per sentence — H_lex from the language model, and H_syn from a spaCy dependency parse — and scores each sentence using Mahalanobis distance from the centre of the normal distribution in that two-dimensional space.
+
+Critically, both systems are fitted on legitimate email only. The test set includes phishing sentences, but the detectors have never seen them during training.
+
+-------------------------------------------------------------------------------
+
+SLIDE 5 — FEATURE 1: H_lex  [~2 minutes]
+
+H_lex is the mean per-token surprisal under a trigram language model trained on ham email. The formula is the mean of negative log base 2 of the probability of each word given the two words before it.
+
+I built the language model from scratch using Python Counter dictionaries — no NLTK, no sklearn. The probability function uses Laplace smoothing: the count of a trigram plus one, divided by the count of the bigram context plus the vocabulary size.
+
+Laplace smoothing is essential here for a specific reason. Without it, any word sequence the model has never seen receives probability zero. Phishing sentences are full of unusual word combinations — those are exactly the sequences with zero count, and exactly the sequences I want to flag. Without smoothing, the original implementation silently skipped those tokens when computing the average, which pulled phishing sentences falsely toward the normal range. With Laplace smoothing, a zero-count trigram gets a very low but non-zero probability, which translates to very high surprisal — correctly flagged as anomalous.
+
+The mean H_lex across normal training sentences is 12.570 bits with a standard deviation of 1.550. The anomaly threshold for D2 is set at mean plus two standard deviations: 15.669 bits.
+
+-------------------------------------------------------------------------------
+
+SLIDE 5b — H_lex COMPUTATION LOOP  [~75 seconds]
+
+This is the function that computes H_lex for a single sentence.
+
+The loop starts at index 1, not index 0, because the first token has no context — you need at least one previous word before you can compute a conditional probability. For each subsequent token, the context is the one or two tokens immediately before it, and the surprisal is negative log base 2 of the probability returned by the language model.
+
+The result is the arithmetic mean of those surprisal values. Mean, not sum — this normalises for sentence length so a five-word sentence and a twenty-word sentence are directly comparable.
+
+The function returns None for sentences with fewer than two alphabetic tokens, which are skipped upstream.
+
+-------------------------------------------------------------------------------
+
+SLIDE 6 — FEATURE 2: H_syn  [~90 seconds]
+
+H_syn is Shannon entropy over the dependency arc labels in a sentence.
+
+When spaCy parses a sentence, it assigns every token a label describing its grammatical role — subject, object, determiner, adverbial modifier, and so on. H_syn is computed as the entropy of the distribution of those labels within a single sentence. A sentence where many different grammatical roles are represented has high H_syn. A sentence dominated by one or two roles has low H_syn.
+
+The hypothesis was that phishing sentences would show lower syntactic diversity — that attackers preserve conventional grammar while manipulating vocabulary. In practice, the H_syn distributions for normal and phishing sentences overlap almost completely. The mean difference is 0.027 bits, which is less than two percent of one standard deviation. H_syn carries essentially no discriminative signal on this corpus, and that is why D3 underperforms D2.
+
+-------------------------------------------------------------------------------
+
+SLIDE 7 — JOINT MODEL: BIVARIATE GAUSSIAN AND MAHALANOBIS  [~2 minutes]
+
+D3 fits a bivariate Gaussian over the (H_lex, H_syn) pairs of all normal training sentences. The mean vector is computed directly. The covariance matrix is computed manually — a nested loop accumulating the outer product of each mean-centred row, divided by n minus one for the unbiased sample estimator.
+
+The fitted covariance matrix is approximately [[1.495, 0.331], [0.331, 0.377]]. The off-diagonal entries capture the positive correlation between H_lex and H_syn on normal email — Pearson r equals 0.44.
+
+At test time, each sentence is scored with Mahalanobis distance. This is the square root of x transpose times the inverse covariance matrix times x, where x is the feature vector minus the mean. The reason I use Mahalanobis rather than Euclidean distance is that the two features are on different scales — H_lex runs from about 11 to 15 bits, H_syn from about 2 to 4 bits. Euclidean distance would be dominated by whichever feature has larger absolute variance. Mahalanobis normalises for both scale and correlation, so both features contribute proportionally.
+
+The condition number of the covariance matrix is approximately 5.5, which means the matrix is well-conditioned — numerical instability is not an issue. The threshold of 1.4625 was selected to maximise F1 on a held-out validation set.
+
+-------------------------------------------------------------------------------
+
+SLIDE 8 — IMPLEMENTATION FROM SCRATCH  [~75 seconds]
+
+The sentence tokeniser and word tokeniser are both custom implementations.
+
+The sentence tokeniser uses a regex with two lookbehind patterns: always split after an exclamation mark or question mark, and split after a full stop only when the next character is a capital letter. Before committing to a split, it checks whether the preceding word is in a 31-entry abbreviation set — Mr, Dr, Jan, Feb, and so on. If it is, the split is suppressed. This handles cases like "Dr. Smith sent an email." without a false break after "Dr."
+
+The word tokeniser is a single regex findall that extracts only alphabetic runs, discarding punctuation, digits, and mixed tokens.
+
+Both tokenisers are consistent throughout the pipeline. The one exception is in the adversarial module, which uses NLTK word_tokenize for its substitution step — a known inconsistency I will mention when I get to the adversarial results.
+
+-------------------------------------------------------------------------------
+
+SLIDE 8b — TRIGRAM MODEL FIT  [~60 seconds]
+
+This is the fit method for the trigram language model.
+
+It makes a single pass over every token in every training sentence. In the same loop body, it increments the unigram counter for the current token, the bigram counter for the current token and its predecessor, and the trigram counter for the current token and its two predecessors, with index guards to handle sentence boundaries.
+
+Time complexity is O(n) in the total number of training tokens. No smoothing is applied during fitting — smoothing is applied at query time in the score method, so the raw counts are always available. Vocabulary size is counted after the loop completes and comes out at approximately 40,000 distinct word types.
+
+-------------------------------------------------------------------------------
+
+SLIDE 9 — DATASETS  [~60 seconds]
+
+The legitimate email corpus is the SpamAssassin public ham dataset — 3,871 emails. The phishing corpus is the Nazario dataset — 1,293 emails. Both are publicly available and both date from the early 2000s, which means the vocabulary and writing style are comparable across the two classes.
+
+I use an 80/20 train-test split with a fixed random seed of 42. For D3, I take a further split from the training portion to create a validation set for threshold optimisation.
+
+Evaluation is done at the sentence level. One email contributes as many data points as it has sentences, which results in roughly a 4:1 to 5:1 imbalance between normal and phishing sentences in the test set.
+
+-------------------------------------------------------------------------------
+
+SLIDE 10 — RESULTS  [~2 minutes]
+
+D2 achieves an AUROC of 0.8087. D3 achieves 0.7136. D2 is the better detector.
+
+AUROC is the probability that a randomly chosen phishing sentence scores higher than a randomly chosen normal sentence. At 0.81, D2 achieves this 81% of the time without ever having seen a phishing example during training. For a fully unsupervised one-class detector, that is a strong result.
+
+D3 underperforms D2 because H_syn adds noise rather than signal. I can demonstrate this precisely using D1, a detector that uses H_syn alone. D1 achieves an AUROC of 0.4677 — below random chance. That means D1 is scoring phishing sentences lower than normal sentences — the opposite of what a detector should do. This happens because complex normal sentences with many clause types score higher on H_syn than average phishing sentences. When I add this anti-discriminative feature to D3 alongside H_lex, it degrades the Mahalanobis score rather than improving it.
+
+The classification report for D2 shows perfect recall on normal sentences but zero recall on phishing at the chosen threshold. This does not mean D2 cannot detect phishing — the AUROC of 0.81 shows it can separate the classes — it means the threshold of 15.669 is conservative. The AUROC is the more honest measure of discriminative power because it is threshold-independent.
+
+-------------------------------------------------------------------------------
+
+SLIDE 11 — ADVERSARIAL EXPERIMENT  [~2 minutes]
+
+The adversarial experiment replaced 30% of eligible words in phishing test sentences with WordNet synonyms. The substitution selects a synonym of the same part of speech, so the grammatical structure is preserved. The idea was to simulate an attacker using synonym rotation to evade vocabulary-based detection.
+
+The result was the opposite of what the experiment was designed to show: both detectors improved after the attack. D2's AUROC went from 0.8087 to 0.8561. D3's went from 0.7136 to 0.7789.
+
+The reason is Laplace smoothing. WordNet synonyms are drawn from formal English — they tend to be more technical or formal than the original phishing vocabulary, and they are less likely to appear in the trigram contexts present in casual workplace email. When a substituted word creates a three-word sequence that has never appeared in the ham training corpus, the trigram count is zero. Laplace assigns probability 1 divided by the vocabulary size, giving a surprisal above 15 bits. That spikes H_lex for the substituted sentence, pushing it further from the normal distribution — more anomalous, not less.
+
+So the adversarial experiment does not show that the system is robust to synonym substitution in the conventional sense. It shows that synonym substitution using WordNet, applied to text scored by a ham-trained language model, makes phishing more detectable because the substituted vocabulary is rarer in normal email context than the original vocabulary.
+
+I should also note that the adversarial module uses NLTK's word tokeniser while the rest of the pipeline uses the custom regex tokeniser. The effect is minor, but it is an inconsistency I would fix in a revised implementation.
+
+-------------------------------------------------------------------------------
+
+SLIDE 12 — ANTICIPATED EXAMINER QUESTIONS  [slide present as backup; do not read aloud — use it if questions come from the panel during Q&A]
+
+These are pre-prepared answers. If the panel asks any of these questions directly, you can reference the slide to organise your answer, but give the verbal response rather than reading the slide text.
+
+-------------------------------------------------------------------------------
+
+SLIDE 13 — LIMITATIONS AND FUTURE WORK  [~75 seconds]
+
+The main limitation is that arc-label entropy is a shallow feature. It counts how many different grammatical roles appear in a sentence but says nothing about clause depth, subordination, or whether the sentence is imperative. A feature like parse tree depth or the presence of an imperative main verb might provide the discriminative signal that H_syn fails to deliver.
+
+The corpora are also from the early 2000s. Modern AI-generated phishing email, written by a large language model, will have quite different statistical properties — potentially closer to natural English and therefore harder to detect with surprisal alone.
+
+The most interesting future direction I identified is the correlation structure. On the normal test set, H_lex and H_syn have a Pearson correlation of 0.44. On the phishing test set, that correlation drops to 0.08. This means the two classes are structured differently in joint space even though their H_syn marginals overlap completely. A detector that directly tests whether the correlation structure of a new document matches the normal pattern might extract useful signal from H_syn even though the H_syn marginal distribution is useless on its own.
+
+-------------------------------------------------------------------------------
+
+SLIDE 14 — CONCLUSION  [~60 seconds]
+
+To summarise: the project asks whether joint entropy dissonance can detect phishing without labelled attack data.
+
+H_lex alone achieves AUROC 0.8087 — strong unsupervised detection. H_syn alone achieves AUROC 0.4677 — below chance, no discriminative signal. The joint model scores 0.7136 — adding H_syn hurts rather than helps, because it introduces noise without contributing signal.
+
+The adversarial result is interesting: synonym substitution makes phishing more detectable, not less, because Laplace scoring penalises the rarer vocabulary that WordNet synonyms introduce.
+
+The project's main negative result — D3 underperforms D2 — is itself a diagnostic contribution. It identifies precisely why a syntactic entropy feature fails on this corpus and points toward what a better syntactic feature would need to measure. Thank you.
+
+-------------------------------------------------------------------------------

@@ -1,0 +1,15 @@
+This app lets you drop any email into a box and see exactly how the system scores it, sentence by sentence.
+
+So here I have a normal legitimate email already loaded — this is an actual email from the SpamAssassin dataset that the system was trained on. I'll click Score and you can see what happens.
+
+The table that comes up shows every sentence in the email as its own row. The H_lex column is basically asking how surprising the word choices are — if someone writes the way a normal professional email sounds, that number stays low, around twelve or thirteen. The H_syn column is asking how varied the grammar is, how many different grammatical roles the words are playing. And then the D2 and D3 columns are the actual anomaly scores for each sentence. The Flagged column on the right tells you which detectors, if any, raised a flag on that sentence.
+
+For this normal email you can see the scores are all sitting comfortably in the expected range and nothing gets flagged. The aggregate at the bottom confirms that — the max score across all sentences is below the threshold, so the email comes through clean.
+
+Now let me clear that and load a phishing example instead. Same thing, click Score.
+
+You can see straight away the numbers look different. Some of these sentences have H_lex values pushing up toward fifteen, even above it in places, which means the word choices in those sentences are genuinely unusual compared to what normal email looks like. The system is not looking for the word "verify" or "click here" — it is just noticing that the way those sentences are constructed statistically does not match what it learned from legitimate email.
+
+And down at the bottom the aggregate verdict shows the max score has crossed the threshold — this email gets flagged.
+
+What makes that interesting is that the system never saw a single phishing email when it was learning what normal looks like. It caught this purely by recognising that something about the language was off.

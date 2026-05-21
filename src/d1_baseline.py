@@ -115,7 +115,7 @@ def main():
     d2_results = evaluate_baseline(ham, phish)
     d3_results = evaluate_full_system(ham, phish)
 
-    # --- reproducibility check ---
+    
     D2_EXPECTED, D3_EXPECTED = 0.8087, 0.7136
     print("\n--- Reproducibility check ---")
     d2_ok = abs(d2_results["auroc"] - D2_EXPECTED) < 0.0005
@@ -126,7 +126,7 @@ def main():
         print("  STOPPING: clean-AUROC reproducibility failed.")
         sys.exit(1)
 
-    # --- adversarial: generate obfuscated phish once, score all three ---
+   
     print(f"\n=== Adversarial: synonym substitution (rate {SUBSTITUTION_RATE:.0%}) ===")
     rng = random.Random(RANDOM_SEED)
     _, phish_test = train_test_split(phish, test_size=0.2, random_state=42)
@@ -138,7 +138,7 @@ def main():
     d2_adv = _adversarial_auroc(d2_results["detector"], d2_results["norm_scores"], obf_phish)
     d3_adv = _adversarial_auroc(d3_results["detector"], d3_results["norm_scores"], obf_phish)
 
-    # --- adversarial reproducibility check ---
+    
     D2_ADV_EXPECTED, D3_ADV_EXPECTED = 0.8561, 0.7789
     print("\n--- Adversarial reproducibility check ---")
     d2_adv_ok = abs(d2_adv - D2_ADV_EXPECTED) < 0.0005
@@ -153,7 +153,7 @@ def main():
     d2_clean = d2_results["auroc"]
     d3_clean = d3_results["auroc"]
 
-    # --- CSV ---
+    
     csv_path = RESULTS_DIR / "three_way_comparison.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -163,7 +163,7 @@ def main():
         writer.writerow(["D3", "H_lex+H_syn",f"{d3_clean:.4f}", f"{d3_adv:.4f}", f"{d3_clean - d3_adv:+.4f}"])
     print(f"\n  Saved: {csv_path}")
 
-    # --- summary table ---
+   
     print("\n" + "=" * 66)
     print("  THREE-WAY COMPARISON")
     print("=" * 66)
@@ -177,7 +177,7 @@ def main():
         print(f"  {det:<5} {feat:<14} {clean:>10.4f} {adv:>13.4f} {clean-adv:>+8.4f}")
     print("=" * 66)
 
-    # --- interpretation ---
+    
     if 0.50 <= d1_clean <= 0.55:
         prediction = "confirmed (0.50 <= AUROC <= 0.55)"
         implication = (

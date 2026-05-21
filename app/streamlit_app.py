@@ -10,7 +10,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-# set non-interactive backend before anything that may import matplotlib
+
 import matplotlib
 matplotlib.use("Agg")
 
@@ -20,14 +20,14 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))                          # project root → src.*
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # app/ → plots
+sys.path.insert(0, str(ROOT))                         
+sys.path.insert(0, str(Path(__file__).resolve().parent)) 
 
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 import spacy
 
-import src.adversarial as _adv_module  # triggers NLTK check + Agg confirm
+import src.adversarial as _adv_module 
 from src.features import (
     NLP, sent_tokenize, word_tokenize,
     compute_h_lex, compute_h_syn,
@@ -37,12 +37,12 @@ from src.baseline import BaselineDetector
 from src.full_system import JointEntropyDetector
 from src.d1_baseline import D1SynDetector
 
-import plots  # app/plots.py
+import plots  
 
 DATA_DIR = ROOT / "data" / "processed"
 
 
-# ─── Cached resources ──────────────────────────────────────────────────────
+
 
 @st.cache_data
 def _load_data():
@@ -155,7 +155,7 @@ def _run_adversarial(rate_pct, res):
     )
 
 
-# ─── Page functions ────────────────────────────────────────────────────────
+
 
 def p1_what_features_see(res):
     st.header("What the features see")
@@ -509,7 +509,7 @@ def p6_adversarial(res):
             st.plotly_chart(fig, use_container_width=True)
 
 
-# ─── Main / sidebar ────────────────────────────────────────────────────────
+
 
 def main():
     st.set_page_config(
@@ -518,6 +518,55 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded",
     )
+
+    # ── Projector visibility: scale up all text ──────────────────────────────
+    st.markdown("""
+    <style>
+    /* body / markdown paragraphs */
+    .stMarkdown p, .stText p { font-size: 1.15rem !important; line-height: 1.6 !important; }
+
+    /* captions are 0.8rem by default — bring them up to readable size */
+    [data-testid="stCaptionContainer"] p,
+    .stCaption p { font-size: 1.0rem !important; }
+
+    /* page headers */
+    h1 { font-size: 2.4rem !important; }
+    h2 { font-size: 2.0rem !important; }
+    h3 { font-size: 1.6rem !important; }
+
+    /* metric widget: label, big number, delta */
+    [data-testid="stMetricLabel"] p { font-size: 1.15rem !important; }
+    [data-testid="stMetricValue"]   { font-size: 3.0rem  !important; }
+    [data-testid="stMetricDelta"]   { font-size: 1.0rem  !important; }
+
+    /* radio buttons and checkboxes */
+    .stRadio    label { font-size: 1.15rem !important; }
+    .stCheckbox label { font-size: 1.15rem !important; }
+
+    /* buttons */
+    .stButton > button {
+        font-size: 1.1rem  !important;
+        padding:   0.55rem 1.8rem !important;
+    }
+
+    /* text area */
+    .stTextArea label    { font-size: 1.1rem  !important; }
+    .stTextArea textarea { font-size: 1.05rem !important; line-height: 1.5 !important; }
+
+    /* slider */
+    .stSlider label                           { font-size: 1.1rem  !important; }
+    .stSlider [data-testid="stTickBarMin"],
+    .stSlider [data-testid="stTickBarMax"]    { font-size: 0.95rem !important; }
+
+    /* sidebar */
+    [data-testid="stSidebar"] .stMarkdown p,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stRadio label { font-size: 1.15rem !important; }
+
+    /* dataframe / table cells */
+    [data-testid="stDataFrame"] { font-size: 1.0rem !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
     st.title("Entropy Dissonance: A Diagnostic Study of Lexical-Syntactic Phishing Detection")
 

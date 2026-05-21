@@ -8,6 +8,9 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy.stats import gaussian_kde, pearsonr, linregress
 
+# Base font size applied to every chart for projector visibility.
+_FONT = dict(size=15)
+
 
 # ─── Internal helpers ──────────────────────────────────────────────────────
 
@@ -104,8 +107,9 @@ def scatter_feature_space(
         xaxis_title="H_lex — mean per-token surprisal (bits)",
         yaxis_title="H_syn — dep-label entropy (bits)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        height=480,
-        margin=dict(l=55, r=20, t=40, b=55),
+        font=_FONT,
+        height=500,
+        margin=dict(l=60, r=20, t=40, b=60),
     )
     return fig
 
@@ -169,7 +173,7 @@ def scatter_with_boundaries(
             line=dict(color="#9467bd", dash="dash", width=2),
         ))
 
-    fig.update_layout(height=520)
+    fig.update_layout(height=540)
     return fig
 
 
@@ -184,8 +188,9 @@ def surprisal_bar(tokens, surprisals):
     fig.update_layout(
         xaxis_title="Token",
         yaxis_title="Surprisal (bits)",
-        height=270,
-        margin=dict(l=50, r=20, t=25, b=55),
+        font=_FONT,
+        height=320,
+        margin=dict(l=55, r=20, t=25, b=60),
     )
     return fig
 
@@ -203,8 +208,9 @@ def dep_label_bar(label_counts):
     fig.update_layout(
         xaxis_title="Dependency label",
         yaxis_title="Count",
-        height=250,
-        margin=dict(l=50, r=20, t=25, b=55),
+        font=_FONT,
+        height=300,
+        margin=dict(l=55, r=20, t=25, b=60),
     )
     return fig
 
@@ -235,11 +241,12 @@ def correlation_scatter(h_lex, h_syn, title):
         showlegend=False,
     ))
     fig.update_layout(
-        title=dict(text=f"{title}<br>Pearson r = {r:.3f}", font=dict(size=13)),
+        title=dict(text=f"{title}<br>Pearson r = {r:.3f}", font=dict(size=15)),
         xaxis_title="H_lex (bits)",
         yaxis_title="H_syn (bits)",
-        height=370,
-        margin=dict(l=55, r=20, t=65, b=55),
+        font=_FONT,
+        height=420,
+        margin=dict(l=60, r=20, t=70, b=60),
     )
     return fig
 
@@ -267,8 +274,9 @@ def h_distribution(orig_vals, obf_vals, feature_name):
         barmode="overlay",
         xaxis_title=f"{feature_name} (bits)",
         yaxis_title="Density",
-        height=330,
+        font=_FONT,
+        height=380,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        margin=dict(l=55, r=20, t=45, b=55),
+        margin=dict(l=60, r=20, t=50, b=60),
     )
     return fig
